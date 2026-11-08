@@ -48,7 +48,7 @@
             {
               contains: {
                 type: 'Intrusion-Set',
-                where: { relatedTo: { type: 'Sector', where: { field: 'name', op: 'eq', value: 'Énergie' } }, relationship: ['targets'] },
+                where: { relatedTo: { type: 'Sector', where: { field: 'name', op: 'eq', value: 'Énergie' } }, relationship: ['targets'], direction: 'out' },
               },
             },
           ],
@@ -58,10 +58,10 @@
     {
       id: 'malware-ransomware-moa',
       title: 'Malwares utilisés par les MOA étiquetés ransomware',
-      description: 'Malwares reliés par « uses » à un MOA portant le libellé ransomware.',
+      description: 'Malwares ciblés par une relation « uses » depuis un MOA portant le libellé ransomware (MOA → malware).',
       query: {
         type: 'Malware',
-        where: { relatedTo: { type: 'Intrusion-Set', where: { label: ['ransomware'] } }, relationship: ['uses'] },
+        where: { relatedTo: { type: 'Intrusion-Set', where: { label: ['ransomware'] } }, relationship: ['uses'], direction: 'in' },
       },
     },
     {
@@ -73,6 +73,7 @@
         where: {
           relatedTo: { type: 'Intrusion-Set', where: { containedIn: { type: 'Report', where: { marking: ['TLP:RED'] } } } },
           relationship: ['uses'],
+          direction: 'in',
         },
       },
     },
@@ -93,7 +94,7 @@
         type: 'Intrusion-Set',
         where: {
           all: [
-            { relatedTo: entityNamed('QuartzLoader'), relationship: ['uses'] },
+            { relatedTo: entityNamed('QuartzLoader'), relationship: ['uses'], direction: 'out' },
             { containedIn: { type: 'Report' }, negate: true },
           ],
         },
@@ -104,7 +105,7 @@
   const byId = Object.fromEntries(examples.map((e) => [e.id, e]));
 
   const defaultDashboard = {
-    version: 1,
+    version: 2,
     title: 'Suivi QuartzLoader',
     widgets: [
       { id: 'w1', title: 'MOA confirmés (rapports + relations)', view: 'number', query: byId['moa-quartzloader'].query, size: 's' },

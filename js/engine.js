@@ -23,9 +23,10 @@
  *   { "label": ["ransomware"], "op": "eq" }           libellés (résolus en id)
  *   { "author": ["CERT-Lumen"] }                      auteur (createdBy, résolu en id)
  *   { "marking": ["TLP:RED"], "op": "eq" }            marquage (résolu en id)
- *   { "relatedTo": Requête, "relationship": ["uses"] }
- *        l'entité a une relation (dans un sens ou l'autre) avec un résultat de
- *        la sous-requête. relationship est facultatif.
+ *   { "relatedTo": Requête, "relationship": ["uses"], "direction": "out" | "in" | "both" }
+ *        l'entité a une relation avec un résultat de la sous-requête.
+ *        relationship est facultatif. direction : "out" = l'entité est la source
+ *        (entité → résultat), "in" = l'entité est la cible, "both" (défaut) = peu importe.
  *   { "containedIn": Requête }                         l'entité figure dans un conteneur
  *                                                      (rapport, grouping…) résultat de la sous-requête
  *   { "contains": Requête }                            (conteneurs) contient un résultat de la sous-requête
@@ -160,8 +161,8 @@
     }`;
 
   const Q_RELATIONSHIPS = `
-    query ODRelationships($fromOrToId: [String], $relationship_type: [String], $first: Int, $after: ID) {
-      stixCoreRelationships(fromOrToId: $fromOrToId, relationship_type: $relationship_type, first: $first, after: $after) {
+    query ODRelationships($fromOrToId: [String], $fromId: [String], $toId: [String], $relationship_type: [String], $first: Int, $after: ID) {
+      stixCoreRelationships(fromOrToId: $fromOrToId, fromId: $fromId, toId: $toId, relationship_type: $relationship_type, first: $first, after: $after) {
         edges { node {
           id relationship_type
           from { ... on StixCoreObject { id entity_type } }
@@ -176,6 +177,21 @@
       labels(filters: $filters, first: $first) { edges { node { id value } } }
     }`;
 
+  const Q_REL_MAPPING = `query ODRelationsMapping { schemaRelationsTypesMapping { key values } }`;
+
+  const Q_SUGGEST = {
+    label: `query ODSuggestLabels($search: String, $first: Int) {
+      labels(search: $search, first: $first) { edges { node { id value color } } } }`,
+    marking: `query ODSuggestMarkings($search: String, $first: Int) {
+      markingDefinitions(search: $search, first: $first) { edges { node { id definition x_opencti_color } } } }`,
+    author: `query ODSuggestAuthors($search: String, $first: Int, $types: [String]) {
+      identities(search: $search, first: $first, types: $types) { edges { node { id name entity_type } } } }`,
+    entity: `query ODSuggestEntities($search: String, $first: Int, $types: [String]) {
+      stixCoreObjects(search: $search, first: $first, types: $types) { edges { node { id entity_type representative { main } } } } }`,
+    vocabulary: `query ODSuggestVocabulary($search: String, $first: Int, $category: VocabularyCategory) {
+      vocabularies(search: $search, first: $first, category: $category) { edges { node { id name description usages } } } }`,
+  };
+
   const Q_MARKINGS = `
     query ODMarkings($filters: FilterGroup, $first: Int) {
       markingDefinitions(filters: $filters, first: $first) { edges { node { id definition } } }
@@ -186,6 +202,33 @@
   // ---------------------------------------------------------------------------
   const asList = (v) => (v === undefined || v === null ? [] : Array.isArray(v) ? v : [v]);
   const fg = (mode, filters = [], filterGroups = []) => ({ mode, filters, filterGroups });
+
+  // ---------------------------------------------------------------------------
+  // Types abstraits → types concrets (pour croiser avec la table des relations)
+  // ---------------------------------------------------------------------------
+  const CONTAINERS = ['Report', 'Grouping', 'Note', 'Opinion', 'Observed-Data', 'Case-Incident', 'Case-Rfi', 'Case-Rft', 'Feedback', 'Task'];
+  const IDENTITIES = ['Individual', 'Organization', 'Sector', 'System', 'SecurityPlatform'];
+  const LOCATIONS = ['City', 'Country', 'Region', 'Position', 'Administrative-Area'];
+  const THREAT_ACTORS = ['Threat-Actor-Group', 'Threat-Actor-Individual'];
+  const SDOS = ['Attack-Pattern', 'Campaign', 'Course-Of-Action', 'Indicator', 'Infrastructure', 'Intrusion-Set', 'Malware', 'Tool',
+    'Vulnerability', 'Incident', 'Event', 'Channel', 'Narrative', 'Language', 'Data-Component', 'Data-Source', 'Malware-Analysis',
+    ...CONTAINERS, ...IDENTITIES, ...LOCATIONS, ...THREAT_ACTORS];
+  const TYPE_TREE = {
+    'Stix-Domain-Object': SDOS, 'Stix-Core-Object': SDOS, 'Container': CONTAINERS, 'Identity': IDENTITIES,
+    'Location': LOCATIONS, 'Threat-Actor': THREAT_ACTORS,
+  };
+  const expandTypes = (types) => [...new Set(asList(types).flatMap((t) => TYPE_TREE[t] || [t]))];
+
+  /** Relations possibles entre deux (ensembles de) types, selon la table OpenCTI. */
+  function possibleRelations(mapping, sourceTypes, targetTypes) {
+    const S = expandTypes(sourceTypes), T = expandTypes(targetTypes);
+    const out = new Set(), inn = new Set();
+    S.forEach((s) => T.forEach((t) => {
+      (mapping[`${s}_${t}`] || []).forEach((r) => out.add(r));
+      (mapping[`${t}_${s}`] || []).forEach((r) => inn.add(r));
+    }));
+    return { out: [...out].sort(), in: [...inn].sort() };
+  }
 
   function describeQuery(q) {
     const t = asList(q.type).join(' | ') || 'Entités';
@@ -200,7 +243,7 @@
     if (c.label) return `libellé ${asList(c.label).join(', ')}`;
     if (c.author) return `auteur ${asList(c.author).join(', ')}`;
     if (c.marking) return `marquage ${asList(c.marking).join(', ')}`;
-    if (c.relatedTo) return `lié à [${describeQuery(c.relatedTo)}]${c.relationship ? ` via ${asList(c.relationship).join('/')}` : ''}`;
+    if (c.relatedTo) return `lié à [${describeQuery(c.relatedTo)}]${c.relationship ? ` via ${asList(c.relationship).join('/')}` : ''}${c.direction && c.direction !== 'both' ? ` (${c.direction === 'out' ? 'sortante' : 'entrante'})` : ''}`;
     if (c.containedIn) return `contenu dans [${describeQuery(c.containedIn)}]`;
     if (c.contains) return `contient [${describeQuery(c.contains)}]`;
     if (c.ids) return `ids (${asList(c.ids).length})`;
@@ -365,12 +408,15 @@
       if (c.relatedTo) {
         const ids = await this.resolveIds(c.relatedTo, ctx);
         const relTypes = asList(c.relationship);
-        if (this.options.relatedStrategy === 'regardingOf') {
-          const values = [{ key: 'id', values: ids.length ? ids : [NONE] }];
+        const direction = c.direction || 'both';
+        // regardingOf ignore le sens : on ne l'utilise que pour « peu importe le sens ».
+        if (direction === 'both' && this.options.relatedStrategy === 'regardingOf') {
+          // Contrat OpenCTI : la négation se met sur l'opérateur de la valeur « id ».
+          const values = [{ key: 'id', values: ids.length ? ids : [NONE], operator: c.negate ? 'not_eq' : 'eq' }];
           if (relTypes.length) values.push({ key: 'relationship_type', values: relTypes });
-          return { filter: { key: ['regardingOf'], values, operator: c.negate ? 'not_eq' : 'eq', mode: 'or' } };
+          return { filter: { key: ['regardingOf'], values, operator: 'eq', mode: 'or' } };
         }
-        const other = await this.walkRelationships(ids, relTypes, ctx);
+        const other = await this.walkRelationships(ids, relTypes, direction, ctx);
         return { filter: this.idFilter('ids', other, c.negate) };
       }
 
@@ -386,24 +432,80 @@
       return { key: [key], values: ids.length ? ids : [NONE], operator: negate ? 'not_eq' : 'eq', mode: negate ? 'and' : 'or' };
     }
 
-    /** Stratégie alternative à regardingOf : lit les relations et collecte l'autre extrémité. */
-    async walkRelationships(ids, relTypes, ctx) {
-      if (!ids.length) return [];
-      const s = this.step(ctx, 'rel', `Relations ${relTypes.join('/') || '(toutes)'} de ${ids.length} entité(s)`);
-      const source = new Set(ids);
+    /**
+     * Parcourt les relations des entités `ids` (résultat de la sous-requête) et
+     * collecte l'autre extrémité. direction : 'out' = l'entité cherchée est la
+     * source (ids en cible), 'in' = l'entité cherchée est la cible, 'both' = les deux.
+     */
+    async walkRelationships(ids, relTypes, direction, ctx) {
+      const arrow = direction === 'out' ? '→' : direction === 'in' ? '←' : '↔';
+      const s = this.step(ctx, 'rel', `Relations ${arrow} ${relTypes.join('/') || '(tous types)'} avec ${ids.length} entité(s)`);
       const other = new Set();
       const chunk = 200;
       for (let i = 0; i < ids.length; i += chunk) {
-        const rels = await this.fetchAll(Q_RELATIONSHIPS, 'stixCoreRelationships',
-          { fromOrToId: ids.slice(i, i + chunk), relationship_type: relTypes.length ? relTypes : null }, ctx, 'Parcours des relations');
+        const part = ids.slice(i, i + chunk);
+        const partSet = new Set(part);
+        const vars = { relationship_type: relTypes.length ? relTypes : null, fromOrToId: null, fromId: null, toId: null };
+        if (direction === 'out') vars.toId = part;
+        else if (direction === 'in') vars.fromId = part;
+        else vars.fromOrToId = part;
+        const rels = await this.fetchAll(Q_RELATIONSHIPS, 'stixCoreRelationships', vars, ctx, `Parcours des relations ${arrow}`);
         rels.forEach((r) => {
-          if (r.from && !source.has(r.from.id)) other.add(r.from.id);
-          if (r.to && !source.has(r.to.id)) other.add(r.to.id);
-          if (r.from && r.to && source.has(r.from.id) && source.has(r.to.id)) { other.add(r.from.id); other.add(r.to.id); }
+          if (!r.from || !r.to) return;
+          if (direction === 'out') other.add(r.from.id);
+          else if (direction === 'in') other.add(r.to.id);
+          else {
+            if (partSet.has(r.from.id)) other.add(r.to.id);
+            if (partSet.has(r.to.id)) other.add(r.from.id);
+          }
         });
       }
       this.done(ctx, s, other.size);
       return [...other];
+    }
+
+    /** Table des relations : celle de l'instance (schemaRelationsTypesMapping), sinon la copie embarquée. */
+    async relationsMapping() {
+      if (this._mapping) return this._mapping;
+      try {
+        const data = await this.t.request(Q_REL_MAPPING, {}, 'Table des relations (schéma)');
+        const mapping = {};
+        data.schemaRelationsTypesMapping.forEach((e) => { mapping[e.key] = e.values; });
+        this._mapping = { mapping, source: 'instance' };
+      } catch (e) {
+        this._mapping = { mapping: (root.OD.relationsMapping || {}).mapping || {}, source: 'embarquée', error: e.message };
+      }
+      return this._mapping;
+    }
+
+    resetCaches() { this._mapping = null; this._suggest = new Map(); }
+
+    /**
+     * Valeurs existantes en base pour les listes dynamiques, comme l'UI OpenCTI.
+     * kind : label | marking | author | entity | vocabulary. Renvoie [{ value, label, color?, hint? }].
+     */
+    async suggest(kind, { search = '', types = null, category = null } = {}) {
+      if (!this._suggest) this._suggest = new Map();
+      const key = JSON.stringify([kind, search, types, category]);
+      if (this._suggest.has(key)) return this._suggest.get(key);
+      const vars = { search: search || null, first: kind === 'vocabulary' ? 200 : 50 };
+      if (kind === 'author') vars.types = ['Organization', 'Individual', 'System'];
+      if (kind === 'entity') { vars.types = types && types.length ? types : null; vars.first = 30; }
+      if (kind === 'vocabulary') vars.category = category;
+      const data = await this.t.request(Q_SUGGEST[kind], vars, `Suggestions : ${kind}${search ? ` « ${search} »` : ''}`);
+      const edges = Object.values(data)[0].edges.map((e) => e.node);
+      const map = {
+        label: (n) => ({ value: n.value, label: n.value, color: n.color }),
+        marking: (n) => ({ value: n.definition, label: n.definition, color: n.x_opencti_color }),
+        author: (n) => ({ value: n.name, label: n.name, hint: n.entity_type }),
+        entity: (n) => ({ value: n.representative?.main, label: n.representative?.main, hint: n.entity_type }),
+        vocabulary: (n) => ({ value: n.name, label: n.name, hint: n.usages ? `${n.usages} usage${n.usages > 1 ? 's' : ''}` : null }),
+      };
+      const seen = new Set();
+      const res = edges.map(map[kind]).filter((o) => o.value && !seen.has(o.value) && seen.add(o.value));
+      this._suggest.set(key, res);
+      if (this._suggest.size > 300) this._suggest.delete(this._suggest.keys().next().value);
+      return res;
     }
 
     /** Liste les objets (des types cibles) contenus dans les conteneurs qui satisfont la sous-requête. */
@@ -503,6 +605,7 @@
   OD.Transport = Transport;
   OD.Engine = Engine;
   OD.dsl = { describeQuery, describeCond, asList };
+  OD.types = { TYPE_TREE, expandTypes, possibleRelations };
   OD.agg = { GROUP_BY, DATE_FIELDS, groupBy, timeline };
   OD.queries = { DISPLAY_FIELDS, Q_OBJECTS, Q_CONTAINERS_OBJECTS, Q_RELATIONSHIPS };
 })(typeof window !== 'undefined' ? window : globalThis);

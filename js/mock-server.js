@@ -54,7 +54,11 @@
     input FilterGroup { mode: FilterMode! filters: [Filter!]! filterGroups: [FilterGroup!]! }
     input Filter { key: [String!]! values: [Any!]! operator: FilterOperator mode: FilterMode }
 
+    enum VocabularyCategory { account_type_ov attack_motivation_ov attack_resource_level_ov case_severity_ov case_priority_ov channel_types_ov collection_layers_ov event_type_ov grouping_context_ov implementation_language_ov incident_response_types_ov incident_type_ov incident_severity_ov indicator_type_ov infrastructure_type_ov integrity_level_ov malware_capabilities_ov malware_result_ov malware_type_ov platforms_ov opinion_ov organization_type_ov pattern_type_ov permissions_ov processor_architecture_ov reliability_ov report_types_ov request_for_information_types_ov request_for_takedown_types_ov security_platform_type_ov service_status_ov service_type_ov start_type_ov threat_actor_group_type_ov threat_actor_group_role_ov threat_actor_group_sophistication_ov threat_actor_individual_type_ov threat_actor_individual_role_ov threat_actor_individual_sophistication_ov tool_types_ov note_types_ov gender_ov marital_status_ov hair_color_ov eye_color_ov persona_type_ov }
     type AppInfo { version: String! }
+    type StixRelationshipSchema { key: String! values: [String!]! }
+    type VocabularyDefinition { key: VocabularyCategory! description: String entity_types: [String!]! }
+    type Vocabulary { id: ID! standard_id: String! entity_type: String! name: String! description: String category: VocabularyDefinition! usages: Int! aliases: [String!] builtIn: Boolean order: Int }
     type PageInfo { startCursor: String! endCursor: String! hasNextPage: Boolean! hasPreviousPage: Boolean! globalCount: Int! }
     type Representative { main: String! secondary: String }
     type Label { id: ID! standard_id: String! entity_type: String! value: String color: String }
@@ -108,6 +112,10 @@
     type StixCoreRelationshipConnection { pageInfo: PageInfo! edges: [StixCoreRelationshipEdge!]! }
     type LabelEdge { cursor: String! node: Label! }
     type LabelConnection { pageInfo: PageInfo! edges: [LabelEdge!]! }
+    type IdentityEdge { cursor: String! node: Identity! }
+    type IdentityConnection { pageInfo: PageInfo! edges: [IdentityEdge!]! }
+    type VocabularyEdge { cursor: String! node: Vocabulary! }
+    type VocabularyConnection { pageInfo: PageInfo! edges: [VocabularyEdge!]! }
     type MarkingDefinitionEdge { cursor: String! node: MarkingDefinition! }
     type MarkingDefinitionConnection { pageInfo: PageInfo! edges: [MarkingDefinitionEdge!]! }
     type StixObjectOrStixRelationshipRefEdge { cursor: String! types: [String]! node: StixObjectOrStixRelationship! }
@@ -131,6 +139,9 @@
         relationship_type: [String], search: String, filters: FilterGroup
       ): StixCoreRelationshipConnection
       labels(${LIST_ARGS}): LabelConnection
+      identities(${LIST_ARGS}, types: [String], toStix: Boolean): IdentityConnection
+      vocabularies(category: VocabularyCategory, ${LIST_ARGS}): VocabularyConnection
+      schemaRelationsTypesMapping: [StixRelationshipSchema!]!
       markingDefinitions(${LIST_ARGS}): MarkingDefinitionConnection
     }
   `;
@@ -178,29 +189,31 @@
       }
     }
 
+    // Même contrat qu'OpenCTI (database/engine.js) : values = [{ key: 'id', values, operator? },
+    // { key: 'relationship_type', values }]. La négation passe par l'opérateur de la valeur id.
     function regardingOf(o, f) {
       const spec = {};
-      (f.values || []).forEach((v) => { if (v && v.key) spec[v.key] = v.values || []; });
-      const ids = new Set(spec.id || []);
-      const types = new Set(spec.relationship_type || []);
+      (f.values || []).forEach((v) => { if (v && v.key) spec[v.key] = v; });
+      if (!spec.id && !spec.relationship_type) throw new Error('Id or dynamic or relationship type are needed for this filtering key');
+      const ids = new Set(spec.id?.values || []);
+      const types = new Set(spec.relationship_type?.values || []);
+      const negate = (spec.id?.operator || 'eq') === 'not_eq';
       const rels = db.relsByEntity.get(o.id) || [];
-      return rels.some((rl) => {
+      const found = rels.some((rl) => {
         if (types.size && !types.has(rl.relationship_type)) return false;
         if (!ids.size) return true;
         const other = rl.fromId === o.id ? rl.toId : rl.fromId;
         const otherStd = db.byId.get(other)?.standard_id;
         return ids.has(other) || ids.has(otherStd);
       });
+      return negate ? !found : found;
     }
 
     function matchFilter(o, f) {
       const op = f.operator || 'eq';
       const keys = Array.isArray(f.key) ? f.key : [f.key];
       return keys.some((key) => {
-        if (key === 'regardingOf') {
-          const res = regardingOf(o, f);
-          return op === 'not_eq' ? !res : res;
-        }
+        if (key === 'regardingOf') return regardingOf(o, f);
         const attrs = valuesOf(o, key);
         if (op === 'nil') return attrs.length === 0 || attrs.every((a) => a === '' || a === null);
         if (op === 'not_nil') return attrs.length > 0 && attrs.some((a) => a !== '' && a !== null);
@@ -272,6 +285,7 @@
       db.containersByObject.get(oid).push(c);
     }));
     const engine = createFilterEngine(db);
+    const relationsMapping = options.relationsMapping || (root.OD && root.OD.relationsMapping ? root.OD.relationsMapping.mapping : {});
 
     function paginate(list, args, wrap) {
       const first = Math.min(args.first ?? 25, 5000);
@@ -373,6 +387,14 @@
       },
       labels: (args) => paginate(data.labels.filter((l) => engine.matchGroup(l, args.filters) &&
         (!args.search || l.value.toLowerCase().includes(args.search.toLowerCase()))), args, view),
+      identities: (args) => listEntities(args, ['Identity']),
+      vocabularies: (args) => {
+        const s = (args.search || '').toLowerCase();
+        const list = (data.vocabularies || []).filter((v) => (!args.category || v.category === args.category) &&
+          (!s || v.name.toLowerCase().includes(s)) && engine.matchGroup(v, args.filters));
+        return paginate(list, args, (v) => ({ ...v, entity_type: 'Vocabulary', category: { key: v.category, description: null, entity_types: [] } }));
+      },
+      schemaRelationsTypesMapping: () => Object.entries(relationsMapping).map(([key, values]) => ({ key, values })),
       markingDefinitions: (args) => paginate(data.markings.filter((m) => engine.matchGroup(m, args.filters) &&
         (!args.search || m.definition.toLowerCase().includes(args.search.toLowerCase()))), args, view),
     };

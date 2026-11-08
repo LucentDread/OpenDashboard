@@ -6,10 +6,8 @@
 (function () {
   'use strict';
   const OD = window.OD;
+  // graphql-js (mock uniquement) : copie locale dans vendor/, aucun accès réseau.
   const GRAPHQL_LOCAL = 'vendor/graphql-16.9.0.min.js';
-  const GRAPHQL_ESM = 'https://cdn.jsdelivr.net/npm/graphql@16.9.0/+esm';
-
-  // graphql-js (pour le mock uniquement) : copie locale, sinon CDN.
   function loadGraphql() {
     if (window.graphql && window.graphql.buildSchema) return Promise.resolve(window.graphql);
     return new Promise((resolve, reject) => {
@@ -18,7 +16,7 @@
       s.onload = () => (window.graphql ? resolve(window.graphql) : reject(new Error('graphql absent')));
       s.onerror = () => reject(new Error(`${GRAPHQL_LOCAL} introuvable`));
       document.head.append(s);
-    }).catch(() => import(GRAPHQL_ESM));
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -72,13 +70,26 @@
     ['Malware', 'Malwares'],
     ['Tool', 'Outils'],
     ['Attack-Pattern', 'Techniques (Attack-Pattern)'],
+    ['Threat-Actor-Individual', 'Acteurs de la menace (individu)'],
     ['Vulnerability', 'Vulnérabilités'],
+    ['Indicator', 'Indicateurs'],
+    ['Infrastructure', 'Infrastructures'],
+    ['Incident', 'Incidents'],
+    ['Course-Of-Action', 'Contre-mesures'],
+    ['Channel', 'Canaux'],
+    ['Narrative', 'Narratifs'],
+    ['Event', 'Événements'],
     ['Report', 'Rapports'],
     ['Grouping', 'Groupings'],
+    ['Note', 'Notes'],
+    ['Case-Incident', 'Cas (incident)'],
     ['Container', 'Tous conteneurs'],
     ['Country', 'Pays'],
+    ['Region', 'Régions'],
+    ['City', 'Villes'],
     ['Sector', 'Secteurs'],
     ['Organization', 'Organisations'],
+    ['Individual', 'Individus'],
     ['Identity', 'Identités'],
     ['Stix-Domain-Object', 'Toutes entités (SDO)'],
   ];
@@ -88,15 +99,25 @@
     'Vulnerability': ['vulnérabilité', 'vulnérabilités'], 'Report': ['rapport', 'rapports'], 'Grouping': ['grouping', 'groupings'],
     'Container': ['conteneur', 'conteneurs'], 'Country': ['pays', 'pays'], 'Sector': ['secteur', 'secteurs'],
     'Organization': ['organisation', 'organisations'], 'Identity': ['identité', 'identités'], 'Stix-Domain-Object': ['entité', 'entités'],
+    'Threat-Actor-Individual': ['acteur individuel', 'acteurs individuels'], 'Indicator': ['indicateur', 'indicateurs'],
+    'Infrastructure': ['infrastructure', 'infrastructures'], 'Incident': ['incident', 'incidents'], 'Course-Of-Action': ['contre-mesure', 'contre-mesures'],
+    'Channel': ['canal', 'canaux'], 'Narrative': ['narratif', 'narratifs'], 'Event': ['événement', 'événements'], 'Note': ['note', 'notes'],
+    'Case-Incident': ['cas', 'cas'], 'Region': ['région', 'régions'], 'City': ['ville', 'villes'], 'Individual': ['individu', 'individus'],
   };
   const noun = (t, n = 2) => (TYPE_PLURAL[t] || [t, t])[n > 1 || n === 0 ? 1 : 0];
-  const CONTAINER_TYPES = ['Report', 'Grouping', 'Container'];
+  const CONTAINER_TYPES = ['Report', 'Grouping', 'Note', 'Case-Incident', 'Container'];
   const FIELDS = [
     ['name', 'Nom'], ['alias', 'Alias'], ['description', 'Description'], ['confidence', 'Confiance (0-100)'],
     ['created', 'Date de création'], ['published', 'Date de publication'], ['created_at', 'Ajouté à la plateforme'],
     ['primary_motivation', 'Motivation principale'], ['report_types', 'Type de rapport'], ['x_mitre_id', 'ID MITRE'],
-    ['malware_types', 'Type de malware'], ['entity_type', 'Type d’entité'],
+    ['malware_types', 'Type de malware'], ['resource_level', 'Niveau de ressources'], ['tool_types', 'Type d’outil'],
+    ['threat_actor_types', 'Type d’acteur'], ['context', 'Contexte (grouping)'], ['entity_type', 'Type d’entité'],
   ];
+  // Champs à valeurs ouvertes (vocabulaires OpenCTI) → catégorie de vocabulaire
+  const VOCAB_FIELDS = {
+    report_types: 'report_types_ov', primary_motivation: 'attack_motivation_ov', resource_level: 'attack_resource_level_ov',
+    malware_types: 'malware_type_ov', tool_types: 'tool_types_ov', threat_actor_types: 'threat_actor_group_type_ov', context: 'grouping_context_ov',
+  };
   const DATE_KEYS = new Set(['created', 'published', 'created_at', 'modified', 'updated_at', 'first_seen', 'last_seen']);
   const OPS = [
     ['eq', 'est'], ['not_eq', 'n’est pas'], ['contains', 'contient'], ['not_contains', 'ne contient pas'],
@@ -105,7 +126,12 @@
   ];
   const OP_LABEL = Object.fromEntries(OPS);
   const DATE_OPS = { gt: 'après le', gte: 'à partir du', lt: 'avant le', lte: 'jusqu’au' };
-  const REL_TYPES = ['uses', 'targets', 'attributed-to', 'drops', 'indicates', 'related-to', 'located-at', 'part-of', 'exploits', 'mitigates', 'communicates-with'];
+
+  // Table des relations : copie embarquée (OpenCTI 6.7.7) en attendant celle de l'instance.
+  let relMap = { mapping: (OD.relationsMapping || {}).mapping || {}, source: 'embarquée' };
+  function loadRelMap() {
+    engine.relationsMapping().then((m) => { relMap = m; if (draft) renderBuilder(); }).catch(() => {});
+  }
 
   // ---------------------------------------------------------------------------
   // Réglages et transport
@@ -229,6 +255,142 @@
       options.map(([v, l]) => h('option', { value: v, selected: v === current ? 'selected' : null }, l)));
   }
 
+  // Sélecteur multi-valeurs alimenté par la base (libellés, marquages, vocabulaires…)
+  function picker({ values, load, onChange, placeholder, freeText = false, single = false, preload = false }) {
+    let selected = asList(values).filter((v) => v !== '' && v !== null && v !== undefined);
+    const colors = new Map();
+    let opts = [], loading = false, error = null, timer = null, reqId = 0;
+    const root = h('div', { class: 'picker' });
+    const input = h('input', { type: 'text', autocomplete: 'off', 'aria-label': placeholder, 'aria-autocomplete': 'list' });
+    const box = h('div', { class: 'picker-box', onclick: () => input.focus() });
+    const list = h('div', { class: 'picker-list', role: 'listbox', hidden: true });
+    root.append(box, list);
+
+    const emit = () => { onChange(selected.slice()); renderChips(); renderList(); };
+    function toggle(v) {
+      if (selected.includes(v)) selected = selected.filter((x) => x !== v);
+      else selected = single ? [v] : [...selected, v];
+      if (single) close();
+      emit();
+    }
+    function renderChips() {
+      box.replaceChildren(...selected.map((v) => h('span', { class: 'pchip' },
+        colors.get(v) ? h('i', { style: `background:${colors.get(v)}` }) : null, v,
+        h('button', { type: 'button', 'aria-label': `Retirer ${v}`, onclick: (e) => { e.stopPropagation(); toggle(v); } }, '✕'))), input);
+      input.placeholder = selected.length ? '' : placeholder;
+    }
+    function renderList() {
+      const typed = input.value.trim();
+      const items = opts.map((o) => h('button', {
+        type: 'button', role: 'option', 'aria-selected': String(selected.includes(o.value)),
+        onclick: (e) => { e.stopPropagation(); toggle(o.value); },
+      }, h('span', { class: 'pcheck' }, selected.includes(o.value) ? '✓' : ''),
+      o.color ? h('i', { style: `background:${o.color}` }) : null,
+      h('span', { class: 'plabel' }, o.label), o.hint ? h('small', {}, o.hint) : null));
+      if (freeText && typed && !opts.some((o) => o.value === typed)) {
+        items.push(h('button', { type: 'button', class: 'pfree', onclick: (e) => { e.stopPropagation(); input.value = ''; toggle(typed); } }, `Utiliser « ${typed} »`));
+      }
+      if (!items.length) items.push(h('div', { class: 'pempty' }, loading ? 'Chargement…' : error ? `Erreur : ${error}` : 'Aucune valeur correspondante en base.'));
+      list.replaceChildren(...items);
+    }
+    async function refresh() {
+      const id = ++reqId;
+      loading = true; error = null; renderList();
+      try {
+        await ensureReady();
+        const r = await load(input.value.trim());
+        if (id !== reqId) return;
+        opts = r;
+        r.forEach((o) => o.color && colors.set(o.value, o.color));
+        renderChips();
+      } catch (e) { if (id === reqId) { opts = []; error = e.message; } }
+      loading = false;
+      if (id === reqId) renderList();
+    }
+    function open() { if (!list.hidden) return; closePickers(root); list.hidden = false; root.classList.add('open'); refresh(); }
+    function close() { list.hidden = true; root.classList.remove('open'); }
+    root._close = close;
+    input.addEventListener('focus', open);
+    input.addEventListener('click', open);
+    input.addEventListener('input', () => { list.hidden = false; clearTimeout(timer); timer = setTimeout(refresh, 180); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { close(); input.blur(); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        const typed = input.value.trim();
+        const match = opts.find((o) => o.value.toLowerCase() === typed.toLowerCase()) || (typed ? opts[0] : null);
+        if (match) { input.value = ''; toggle(match.value); } else if (freeText && typed) { input.value = ''; toggle(typed); }
+      } else if (e.key === 'Backspace' && !input.value && selected.length) toggle(selected[selected.length - 1]);
+    });
+    renderChips();
+    if (preload && selected.length) {
+      Promise.resolve().then(ensureReady).then(() => load('')).then((r) => { r.forEach((o) => o.color && colors.set(o.value, o.color)); renderChips(); }).catch(() => {});
+    }
+    return root;
+  }
+  function closePickers(except) { $$('.picker.open').forEach((p) => { if (p !== except && p._close) p._close(); }); }
+  document.addEventListener('click', (e) => { if (!e.target.closest('.picker')) closePickers(); });
+
+  const setValue = (c) => (arr) => { c.value = arr.length > 1 ? arr : (arr[0] || ''); syncDraft(); };
+
+  function valueEditor(c, ctxType) {
+    if (['nil', 'not_nil'].includes(c.op)) return null;
+    if (DATE_KEYS.has(c.field)) {
+      return h('input', {
+        type: 'date', value: String(asList(c.value)[0] || '').slice(0, 10), 'aria-label': 'Date',
+        oninput: (e) => { c.value = e.target.value ? `${e.target.value}T00:00:00.000Z` : ''; syncDraft(); },
+      });
+    }
+    const exact = ['eq', 'not_eq', undefined].includes(c.op);
+    if (exact && VOCAB_FIELDS[c.field]) {
+      return picker({ values: c.value, onChange: setValue(c), placeholder: 'choisir dans le vocabulaire…', freeText: true,
+        load: (q) => engine.suggest('vocabulary', { search: q, category: VOCAB_FIELDS[c.field] }) });
+    }
+    if (exact && (c.field === 'name' || c.field === 'alias')) {
+      return picker({ values: c.value, onChange: setValue(c), placeholder: `chercher parmi les ${noun(ctxType)}…`, freeText: true,
+        load: (q) => engine.suggest('entity', { search: q, types: [ctxType] }) });
+    }
+    if (exact && c.field === 'entity_type') {
+      return picker({ values: c.value, onChange: setValue(c), placeholder: 'type…',
+        load: async (q) => TYPES.filter(([v, l]) => !q || `${v} ${l}`.toLowerCase().includes(q.toLowerCase())).map(([v, l]) => ({ value: v, label: v, hint: l })) });
+    }
+    return h('input', {
+      type: 'text', value: asList(c.value).join(', '), placeholder: 'valeur (plusieurs : séparées par des virgules)', 'aria-label': 'Valeur',
+      oninput: (e) => { const l = parseList(e.target.value); c.value = l.length > 1 ? l : (l[0] || ''); syncDraft(); },
+    });
+  }
+
+  // Sélecteur de relation : uniquement les relations permises entre les deux types, avec le sens.
+  function relationSelect(c, srcType, tgtType) {
+    const { out, in: inn } = OD.types.possibleRelations(relMap.mapping, srcType, tgtType);
+    const S = noun(srcType, 1), T = noun(tgtType, 1);
+    const rels = asList(c.relationship);
+    const dir = c.direction || 'both';
+    const current = rels.length === 0 ? `*|${dir}` : rels.length === 1 ? `${rels[0]}|${dir}` : `${rels.join(',')}|${dir}`;
+    const groups = [
+      ['Tout type de relation', [['*|both', 'Toute relation, peu importe le sens'], ['*|out', `Toute relation ${S} → ${T}`], ['*|in', `Toute relation ${T} → ${S}`]]],
+      [`Sortantes : ${S} → ${T}`, out.map((r) => [`${r}|out`, `${S} —${r}→ ${T}`])],
+      [`Entrantes : ${T} → ${S}`, inn.map((r) => [`${r}|in`, `${T} —${r}→ ${S}`])],
+      ['Peu importe le sens', [...new Set([...out, ...inn, 'related-to'])].sort().map((r) => [`${r}|both`, `${r} (dans un sens ou l’autre)`])],
+    ];
+    const known = groups.some(([, opts]) => opts.some(([v]) => v === current));
+    const select = h('select', {
+      'aria-label': 'Relation', class: 'rel-select',
+      onchange: (e) => {
+        const [r, d] = e.target.value.split('|');
+        c.relationship = r === '*' ? [] : r.split(',');
+        c.direction = d;
+        if (d === 'both') delete c.direction;
+        syncDraft();
+      },
+    },
+    known ? null : h('option', { value: current, selected: 'selected' }, `${rels.join(', ')} (${dir}) — hors schéma`),
+    groups.map(([label, opts]) => h('optgroup', { label },
+      opts.length ? opts.map(([v, l]) => h('option', { value: v, selected: v === current ? 'selected' : null }, l))
+        : h('option', { disabled: true, value: '' }, 'aucune relation prévue par le schéma'))));
+    return select;
+  }
+
   function renderBuilder() {
     const root = $('#builder');
     root.replaceChildren(renderQueryBox(draft, { nested: false, verb: 'Chercher' }));
@@ -248,19 +410,19 @@
     return h('div', { class: `qbox${nested ? ' nested' : ''}` },
       h('div', { class: 'qhead' },
         h('span', { class: 'verb' }, verb),
-        sel(types, q.type, (v) => { q.type = v; syncDraft(); }, { 'aria-label': 'Type d’entité' }),
+        sel(types, q.type, (v) => { q.type = v; renderBuilder(); }, { 'aria-label': 'Type d’entité' }),
         h('input', { type: 'text', value: q.search || '', placeholder: 'mot-clé (facultatif)', 'aria-label': 'Recherche plein texte', oninput: (e) => { q.search = e.target.value; syncDraft(); } })),
-      renderGroup(q.where, true));
+      renderGroup(q.where, true, q.type));
   }
 
-  function renderGroup(g, isRoot) {
+  function renderGroup(g, isRoot, ctxType) {
     const key = g.all ? 'all' : 'any';
     const list = g[key];
     const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Combinaison' },
       h('button', { type: 'button', 'aria-pressed': String(key === 'all'), onclick: () => { if (key !== 'all') { g.all = g.any; delete g.any; renderBuilder(); } } }, 'Toutes'),
       h('button', { type: 'button', 'aria-pressed': String(key === 'any'), onclick: () => { if (key !== 'any') { g.any = g.all; delete g.all; renderBuilder(); } } }, 'Au moins une'));
     const kids = h('div', { class: `children${key === 'any' ? ' or' : ''}` },
-      list.map((c, i) => renderCond(c, list, i)));
+      list.map((c, i) => renderCond(c, list, i, ctxType)));
     return h('div', { class: 'group' },
       h('div', { class: 'group-bar' },
         list.length > 1 || !isRoot ? seg : null,
@@ -309,47 +471,41 @@
     return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!c.negate, onchange: (e) => { c.negate = e.target.checked; syncDraft(); } }), label);
   }
 
-  function renderCond(c, list, i) {
+  function renderCond(c, list, i, ctxType) {
     if (isGroup(c)) {
-      return h('div', { class: 'cond' }, h('div', { class: 'cond-row' }, h('span', { class: 'cond-kind' }, 'groupe'), removeBtn(list, i)), renderGroup(c, false));
+      return h('div', { class: 'cond' }, h('div', { class: 'cond-row' }, h('span', { class: 'cond-kind' }, 'groupe'), removeBtn(list, i)), renderGroup(c, false, ctxType));
     }
     if (c.field) {
-      const valueInput = h('input', {
-        type: DATE_KEYS.has(c.field) ? 'date' : 'text',
-        value: DATE_KEYS.has(c.field) ? String(asList(c.value)[0] || '').slice(0, 10) : asList(c.value).join(', '),
-        placeholder: 'valeur (plusieurs : séparées par des virgules)', 'aria-label': 'Valeur',
-        hidden: ['nil', 'not_nil'].includes(c.op),
-        oninput: (e) => {
-          if (DATE_KEYS.has(c.field)) c.value = e.target.value ? `${e.target.value}T00:00:00.000Z` : '';
-          else { const l = parseList(e.target.value); c.value = l.length > 1 ? l : (l[0] || ''); }
-          syncDraft();
-        },
-      });
-      return h('div', { class: 'cond' }, h('div', { class: 'cond-row' },
-        h('span', { class: 'cond-kind' }, 'attribut'),
-        sel(FIELDS, c.field, (v) => { const wasDate = DATE_KEYS.has(c.field); c.field = v; if (wasDate !== DATE_KEYS.has(v)) c.value = ''; renderBuilder(); }, { 'aria-label': 'Champ' }),
-        sel(OPS, c.op || 'eq', (v) => { c.op = v; renderBuilder(); }, { 'aria-label': 'Opérateur' }),
-        valueInput,
-        removeBtn(list, i)));
+      const editor = valueEditor(c, ctxType);
+      return h('div', { class: 'cond' },
+        h('div', { class: 'cond-row' },
+          h('span', { class: 'cond-kind' }, 'attribut'),
+          sel(FIELDS, c.field, (v) => { const wasDate = DATE_KEYS.has(c.field); c.field = v; if (wasDate !== DATE_KEYS.has(v) || VOCAB_FIELDS[v]) c.value = ''; renderBuilder(); }, { 'aria-label': 'Champ' }),
+          sel(OPS, c.op || 'eq', (v) => { c.op = v; renderBuilder(); }, { 'aria-label': 'Opérateur' }),
+          removeBtn(list, i)),
+        editor);
     }
-    for (const [key, kind, ph] of [['label', 'libellé', 'ransomware, espionnage'], ['author', 'auteur', 'CERT-Lumen'], ['marking', 'marquage', 'TLP:RED']]) {
+    const DYN = {
+      label: ['libellé', 'choisir des libellés…', (q) => engine.suggest('label', { search: q })],
+      author: ['auteur', 'choisir des auteurs…', (q) => engine.suggest('author', { search: q })],
+      marking: ['marquage', 'choisir des marquages…', (q) => engine.suggest('marking', { search: q })],
+    };
+    for (const [key, [kind, ph, load]] of Object.entries(DYN)) {
       if (c[key] !== undefined) {
-        return h('div', { class: 'cond' }, h('div', { class: 'cond-row' },
-          h('span', { class: 'cond-kind' }, kind),
-          h('input', { type: 'text', value: asList(c[key]).join(', '), placeholder: ph, 'aria-label': kind, oninput: (e) => { c[key] = parseList(e.target.value); syncDraft(); } }),
-          negateBox(c, 'exclure'),
-          removeBtn(list, i)));
+        return h('div', { class: 'cond' },
+          h('div', { class: 'cond-row' }, h('span', { class: 'cond-kind' }, kind), negateBox(c, 'exclure'), removeBtn(list, i)),
+          picker({ values: c[key], load, placeholder: ph, preload: key !== 'author', onChange: (arr) => { c[key] = arr; syncDraft(); } }));
       }
     }
     if (c.relatedTo) {
-      const dl = `rels-${Math.random().toString(36).slice(2, 8)}`;
+      normalize(c.relatedTo);
       return h('div', { class: 'cond' },
         h('div', { class: 'cond-row' },
           h('span', { class: 'cond-kind' }, 'lié à'),
-          h('input', { type: 'text', list: dl, value: asList(c.relationship).join(', '), placeholder: 'relation : uses, targets… (toutes si vide)', 'aria-label': 'Types de relation', oninput: (e) => { c.relationship = parseList(e.target.value); syncDraft(); } }),
-          h('datalist', { id: dl }, REL_TYPES.map((r) => h('option', { value: r }))),
+          relationSelect(c, ctxType, c.relatedTo.type),
           negateBox(c, 'exclure'),
           removeBtn(list, i)),
+        h('div', { class: 'rel-src muted' }, `Relations proposées d’après la table ${relMap.source === 'instance' ? 'de l’instance' : 'embarquée (OpenCTI 6.7.7)'}.`),
         renderQueryBox(c.relatedTo, { nested: true, verb: 'parmi' }));
     }
     if (c.containedIn) {
@@ -399,7 +555,13 @@
     if (c.label) return `qui ${not}portent${pas} le libellé ${asList(c.label).map((l) => `« ${esc(l)} »`).join(' ou ')}`;
     if (c.author) return `qui ${c.negate ? 'ne sont pas' : 'sont'} créés par ${asList(c.author).map((l) => `« ${esc(l)} »`).join(' ou ')}`;
     if (c.marking) return `qui ${c.negate ? 'ne sont pas' : 'sont'} marqués ${asList(c.marking).map((l) => esc(l)).join(' ou ')}`;
-    if (c.relatedTo) return `qui ${c.negate ? 'ne sont pas' : 'sont'} liés${c.relationship && asList(c.relationship).length ? ` (${asList(c.relationship).map(esc).join(', ')})` : ''} à des ${phraseQuery(c.relatedTo)}`;
+    if (c.relatedTo) {
+      const rels = asList(c.relationship);
+      const rel = rels.length ? `« ${rels.map(esc).join(' » ou « ')} »` : '';
+      if (c.direction === 'out') return `qui ${c.negate ? 'n’ont pas' : 'ont'} de relation ${rel} vers des ${phraseQuery(c.relatedTo)}`.replace('relation  vers', 'relation vers');
+      if (c.direction === 'in') return `qui ${c.negate ? 'ne sont pas' : 'sont'} la cible d’une relation ${rel} depuis des ${phraseQuery(c.relatedTo)}`.replace('relation  depuis', 'relation depuis');
+      return `qui ${c.negate ? 'ne sont pas' : 'sont'} liés${rel ? ` (${rel})` : ''} à des ${phraseQuery(c.relatedTo)}`;
+    }
     if (c.containedIn) return `qui ${c.negate ? 'ne figurent dans aucun' : 'figurent dans des'} ${phraseQuery(c.containedIn)}`;
     if (c.contains) return `qui ${not}contiennent${pas} des ${phraseQuery(c.contains)}`;
     if (c.ids) return `parmi ${asList(c.ids).length} identifiant(s)`;
@@ -481,7 +643,9 @@
   // ---------------------------------------------------------------------------
   // Tableau de bord
   // ---------------------------------------------------------------------------
-  let dashboard = store.get('od.dashboard', null) || clone(OD.defaultDashboard);
+  let dashboard = store.get('od.dashboard', null);
+  // Un tableau de bord d'une version antérieure du POC est remplacé par le nouveau tableau par défaut.
+  if (!dashboard || !Array.isArray(dashboard.widgets) || (dashboard.version || 1) < OD.defaultDashboard.version) dashboard = clone(OD.defaultDashboard);
   const saveDashboard = () => store.set('od.dashboard', dashboard);
 
   function renderDashboard() {
@@ -806,6 +970,7 @@
       e.preventDefault();
       const before = settings.mode;
       readSettings(); saveSettings(); applySettings();
+      engine.resetCaches(); ensureReady().then(loadRelMap).catch(() => {});
       toast('Réglages enregistrés');
       if (before !== settings.mode) { ensureReady().catch(() => {}); renderDashboard(); }
     });
@@ -827,7 +992,7 @@
     route();
     applySettings();
     renderDashboard();
-    ensureReady().then(() => runExplorer()).catch(() => {});
+    ensureReady().then(() => { loadRelMap(); runExplorer(); }).catch(() => {});
   }
 
   init();

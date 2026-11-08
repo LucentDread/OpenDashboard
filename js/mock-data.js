@@ -276,7 +276,34 @@
       context: 'suspicious-activity', objects: ids('QuartzLoader', 'MistDrop', 'Hollow Reed', 'Ashen Wren'), createdBy: A['SOC interne (mock)'],
     });
 
-    return { entities, relationships, labels, markings, parents: PARENTS };
+    // Vocabulaires (listes ouvertes OpenCTI) : valeurs par défaut + valeurs utilisées dans le jeu.
+    const VOCAB = {
+      report_types_ov: ['threat-report', 'internal-report', 'malware-analysis', 'attack-pattern', 'campaign', 'indicator', 'threat-actor', 'vulnerability'],
+      attack_motivation_ov: ['accidental', 'coercion', 'dominance', 'ideology', 'notoriety', 'organizational-gain', 'personal-gain', 'personal-satisfaction', 'revenge', 'unpredictable'],
+      attack_resource_level_ov: ['club', 'contest', 'government', 'individual', 'organization', 'team'],
+      malware_type_ov: ['adware', 'backdoor', 'bot', 'bootkit', 'ddos', 'downloader', 'dropper', 'exploit-kit', 'keylogger', 'ransomware', 'remote-access-trojan', 'resource-exploitation', 'rogue-security-software', 'rootkit', 'screen-capture', 'spyware', 'trojan', 'unknown', 'virus', 'webshell', 'wiper', 'worm'],
+      tool_types_ov: ['denial-of-service', 'exploitation', 'information-gathering', 'network-capture', 'credential-exploitation', 'remote-access', 'vulnerability-scanning', 'unknown'],
+      threat_actor_group_type_ov: ['activist', 'competitor', 'crime-syndicate', 'criminal', 'hacker', 'insider-accidental', 'insider-disgruntled', 'nation-state', 'sensationalist', 'spy', 'terrorist', 'unknown'],
+      grouping_context_ov: ['suspicious-activity', 'malware-analysis', 'unspecified'],
+    };
+    const VOCAB_FIELDS = {
+      report_types: 'report_types_ov', primary_motivation: 'attack_motivation_ov', resource_level: 'attack_resource_level_ov',
+      malware_types: 'malware_type_ov', tool_types: 'tool_types_ov', threat_actor_types: 'threat_actor_group_type_ov', context: 'grouping_context_ov',
+    };
+    const usages = {};
+    entities.forEach((e) => Object.entries(VOCAB_FIELDS).forEach(([field, cat]) => {
+      [].concat(e[field] || []).forEach((v) => {
+        if (!VOCAB[cat].includes(v)) VOCAB[cat].push(v);
+        usages[`${cat}|${v}`] = (usages[`${cat}|${v}`] || 0) + 1;
+      });
+    }));
+    const vocabularies = [];
+    Object.entries(VOCAB).forEach(([category, names]) => names.forEach((name, order) => vocabularies.push({
+      id: uuid(r), standard_id: `vocabulary--${uuid(r)}`, category, name, description: null,
+      usages: usages[`${category}|${name}`] || 0, aliases: [], builtIn: true, order,
+    })));
+
+    return { entities, relationships, labels, markings, vocabularies, parents: PARENTS };
   }
 
   OD.mockData = { build };
