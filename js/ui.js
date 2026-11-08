@@ -93,18 +93,8 @@
     ['Identity', 'Identités'],
     ['Stix-Domain-Object', 'Toutes entités (SDO)'],
   ];
-  const TYPE_PLURAL = {
-    'Intrusion-Set': ['mode opératoire', 'modes opératoires'], 'Threat-Actor-Group': ['acteur', 'acteurs'], 'Campaign': ['campagne', 'campagnes'],
-    'Malware': ['malware', 'malwares'], 'Tool': ['outil', 'outils'], 'Attack-Pattern': ['technique', 'techniques'],
-    'Vulnerability': ['vulnérabilité', 'vulnérabilités'], 'Report': ['rapport', 'rapports'], 'Grouping': ['grouping', 'groupings'],
-    'Container': ['conteneur', 'conteneurs'], 'Country': ['pays', 'pays'], 'Sector': ['secteur', 'secteurs'],
-    'Organization': ['organisation', 'organisations'], 'Identity': ['identité', 'identités'], 'Stix-Domain-Object': ['entité', 'entités'],
-    'Threat-Actor-Individual': ['acteur individuel', 'acteurs individuels'], 'Indicator': ['indicateur', 'indicateurs'],
-    'Infrastructure': ['infrastructure', 'infrastructures'], 'Incident': ['incident', 'incidents'], 'Course-Of-Action': ['contre-mesure', 'contre-mesures'],
-    'Channel': ['canal', 'canaux'], 'Narrative': ['narratif', 'narratifs'], 'Event': ['événement', 'événements'], 'Note': ['note', 'notes'],
-    'Case-Incident': ['cas', 'cas'], 'Region': ['région', 'régions'], 'City': ['ville', 'villes'], 'Individual': ['individu', 'individus'],
-  };
-  const noun = (t, n = 2) => (TYPE_PLURAL[t] || [t, t])[n > 1 || n === 0 ? 1 : 0];
+  const noun = (t, n = 2) => OD.phrase.noun(t, n === 1 ? 1 : 2);
+  const phrase = (q) => OD.phrase.query(q, { html: true });
   const CONTAINER_TYPES = ['Report', 'Grouping', 'Note', 'Case-Incident', 'Container'];
   const FIELDS = [
     ['name', 'Nom'], ['alias', 'Alias'], ['description', 'Description'], ['confidence', 'Confiance (0-100)'],
@@ -380,7 +370,8 @@
           }
           return out;
         };
-        validate.message = (v) => `Aucun(e) ${noun(ctxType, 1)} nommé(e) « ${v} » en base : changez le type de ce bloc ou le nom.`;
+        const f = OD.phrase.nounOf(ctxType).g === 'f';
+        validate.message = (v) => `${f ? 'Aucune' : 'Aucun'} ${noun(ctxType, 1)} ${f ? 'nommée' : 'nommé'} « ${v} » en base : changez le type de ce bloc ou le nom.`;
       }
       return picker({ values: c.value, onChange: setValue(c), placeholder: `chercher parmi les ${noun(ctxType)}…`, freeText: true, validate,
         load: (q) => engine.suggest('entity', { search: q, types: [ctxType] }) });
@@ -434,7 +425,7 @@
 
   function syncDraft() {
     const q = cleanQuery(draft);
-    $('#sentence').innerHTML = `Recherche : ${phraseQuery(q, true)}.`;
+    $('#sentence').innerHTML = `Recherche : ${phrase(q)}.`;
     if (document.activeElement !== $('#json')) $('#json').value = JSON.stringify(q, null, 2);
     store.set('od.draft', draft);
   }
@@ -565,44 +556,7 @@
 
   // Phrase en français décrivant la requête
   const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-  function phraseQuery(q, top) {
-    const t = `<b>${esc(asList(q.type).map((x) => noun(x)).join(' ou '))}</b>`;
-    let s = top ? `les ${t}` : t;
-    if (q.search) s += ` (mot-clé « ${esc(q.search)} »)`;
-    if (q.where) s += ` ${phraseCond(q.where)}`;
-    return s;
-  }
-  function phraseCond(c) {
-    if (isGroup(c)) {
-      const key = c.all ? 'all' : 'any';
-      const parts = c[key].map(phraseCond);
-      return parts.length > 1 ? `(${parts.join(key === 'all' ? ' <b>et</b> ' : ' <b>ou</b> ')})` : parts[0] || '';
-    }
-    const not = c.negate ? 'ne ' : '';
-    const pas = c.negate ? ' pas' : '';
-    if (c.field) {
-      const label = (FIELDS.find(([v]) => v === c.field) || [c.field, c.field])[1].toLowerCase();
-      if (c.op === 'nil') return `dont ${label} est vide`;
-      if (c.op === 'not_nil') return `dont ${label} est renseigné`;
-      const val = asList(c.value).map((v) => `« ${esc(DATE_KEYS.has(c.field) ? fmtDate(v) : v)} »`).join(' ou ');
-      const op = DATE_KEYS.has(c.field) && DATE_OPS[c.op] ? DATE_OPS[c.op] : OP_LABEL[c.op || 'eq'];
-      return `dont ${label} ${op} ${val}`;
-    }
-    if (c.label) return `qui ${not}portent${pas} le libellé ${asList(c.label).map((l) => `« ${esc(l)} »`).join(' ou ')}`;
-    if (c.author) return `qui ${c.negate ? 'ne sont pas' : 'sont'} créés par ${asList(c.author).map((l) => `« ${esc(l)} »`).join(' ou ')}`;
-    if (c.marking) return `qui ${c.negate ? 'ne sont pas' : 'sont'} marqués ${asList(c.marking).map((l) => esc(l)).join(' ou ')}`;
-    if (c.relatedTo) {
-      const rels = asList(c.relationship);
-      const rel = rels.length ? `« ${rels.map(esc).join(' » ou « ')} »` : '';
-      if (c.direction === 'out') return `qui ${c.negate ? 'n’ont pas' : 'ont'} de relation ${rel} vers des ${phraseQuery(c.relatedTo)}`.replace('relation  vers', 'relation vers');
-      if (c.direction === 'in') return `qui ${c.negate ? 'ne sont pas' : 'sont'} la cible d’une relation ${rel} depuis des ${phraseQuery(c.relatedTo)}`.replace('relation  depuis', 'relation depuis');
-      return `qui ${c.negate ? 'ne sont pas' : 'sont'} liés${rel ? ` (${rel})` : ''} à des ${phraseQuery(c.relatedTo)}`;
-    }
-    if (c.containedIn) return `qui ${c.negate ? 'ne figurent dans aucun' : 'figurent dans des'} ${phraseQuery(c.containedIn)}`;
-    if (c.contains) return `qui ${not}contiennent${pas} des ${phraseQuery(c.contains)}`;
-    if (c.ids) return `parmi ${asList(c.ids).length} identifiant(s)`;
-    return '';
-  }
+
 
   // ---------------------------------------------------------------------------
   // Exécution dans l'explorateur
@@ -728,7 +682,7 @@
       await ensureReady();
       const res = await engine.run(w.query);
       body.replaceChildren(renderWidgetView(w, res.items));
-      meta.replaceChildren(h('span', {}, `${res.stats.requests} requêtes · ${res.stats.ms} ms`), h('span', { class: 'q' }, `· ${stripTags(phraseQuery(w.query, true))}`));
+      meta.replaceChildren(h('span', {}, `${res.stats.requests} requêtes · ${res.stats.ms} ms`), h('span', { class: 'q' }, `· ${stripTags(phrase(w.query))}`));
     } catch (e) {
       body.replaceChildren(h('div', { class: 'err-box' }, `Échec : ${e.message}`));
     }
@@ -842,7 +796,7 @@
     const w = editingWidget ? dashboard.widgets.find((x) => x.id === editingWidget) : null;
     $('#widget-dialog-title').textContent = w ? 'Mettre à jour le widget' : 'Nouveau widget';
     $('#wd-ok').textContent = w ? 'Mettre à jour' : 'Ajouter au tableau de bord';
-    $('#wd-title').value = w ? w.title : stripTags(phraseQuery(lastRun.query, true)).replace(/^les /, '').slice(0, 80);
+    $('#wd-title').value = w ? w.title : stripTags(phrase(lastRun.query)).replace(/^les /, '').slice(0, 80);
     $('#wd-view').value = w ? w.view : 'table';
     $('#wd-size').value = w ? w.size || 'm' : 'm';
     $('#wd-group').value = w?.groupBy || 'entity_type';

@@ -116,12 +116,13 @@ index.html            page, styles
 js/engine.js          moteur : transport, compilation du DSL, exécution, agrégations
 js/ui.js              interface
 js/examples.js        requêtes d’exemple et tableau de bord par défaut
+js/phrase.js          traduction d’une requête en phrase française (articles, accords, verbes des relations, négations)
 js/mock-server.js     mock GraphQL (sous-ensemble du schéma OpenCTI 6.7.7 + sémantique des filtres)
 js/mock-data.js       jeu de données fictif
 js/opencti-relations.js  table des relations OpenCTI 6.7.7 (générée, repli hors ligne)
 vendor/               graphql-js 16.9.0 (mock uniquement) et polices IBM Plex (OFL)
 tools/serve.js        serveur local + relais /graphql
-tests/engine.test.js  tests du moteur contre le mock (npm test)
+tests/                tests du moteur contre le mock et du générateur de phrases (npm test)
 ```
 
 ## Développement
