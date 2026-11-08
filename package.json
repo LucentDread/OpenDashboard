@@ -1,0 +1,15 @@
+{
+  "name": "opendashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Requêtes en profondeur et widgets pour OpenCTI 6.7.x (POC)",
+  "scripts": {
+    "test": "node tests/engine.test.js",
+    "build:artifact": "node tools/build-artifact.js",
+    "build:vendor": "NODE_PATH=./node_modules esbuild tools/graphql-entry.js --bundle --minify --format=iife --global-name=graphql --platform=browser --define:process.env.NODE_ENV='\"production\"' --legal-comments=inline --main-fields=main --outfile=vendor/graphql-16.9.0.min.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.1",
+    "graphql": "16.9.0"
+  }
+}

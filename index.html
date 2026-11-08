@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- OD:BODY-START -->
+<title>OpenDashboard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout : barre d'outils collante, puis un plan de travail par onglet.
+   Explorateur = constructeur à gauche / résultats à droite, empilés sous 960px.
+   Tableau de bord = grille de widgets 12 colonnes (s=3, m=6, l=12). */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --ink: #17212b;
+  --ink-2: #4a5866;
+  --ink-3: #7a8794;
+  --line: #d6dde4;
+  --line-2: #e6ebf0;
+  --accent: #0b6e69;
+  --accent-ink: #ffffff;
+  --accent-soft: #d9efed;
+  --danger: #b42318;
+  --danger-soft: #fde7e4;
+  --warn: #9a5b00;
+  --warn-soft: #fff1d6;
+  --ok: #1f7a3a;
+  --tooltip-bg: #17212b;
+  --tooltip-ink: #f3f6f8;
+  --shadow: 0 1px 2px rgba(23, 33, 43, .06), 0 2px 8px rgba(23, 33, 43, .05);
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161c; --surface: #172029; --surface-2: #1c2731; --ink: #e4eaef; --ink-2: #a9b5c0; --ink-3: #7d8a96;
+    --line: #2c3946; --line-2: #24303b; --accent: #4fb8ad; --accent-ink: #0b1a19; --accent-soft: #173a38;
+    --danger: #f2877b; --danger-soft: #3a1f1c; --warn: #f0b860; --warn-soft: #33270f; --ok: #6cc489;
+    --tooltip-bg: #e4eaef; --tooltip-ink: #10161c; --shadow: 0 1px 2px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161c; --surface: #172029; --surface-2: #1c2731; --ink: #e4eaef; --ink-2: #a9b5c0; --ink-3: #7d8a96;
+  --line: #2c3946; --line-2: #24303b; --accent: #4fb8ad; --accent-ink: #0b1a19; --accent-soft: #173a38;
+  --danger: #f2877b; --danger-soft: #3a1f1c; --warn: #f0b860; --warn-soft: #33270f; --ok: #6cc489;
+  --tooltip-bg: #e4eaef; --tooltip-ink: #10161c; --shadow: 0 1px 2px rgba(0,0,0,.3);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 14px/1.45 var(--f-body); -webkit-text-size-adjust: 100%; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--surface); }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: .005em; }
+button, input, select, textarea { font: inherit; color: inherit; }
+code, pre, textarea.code { font-family: var(--f-mono); font-size: 12.5px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* Barre supérieure */
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--line); }
+.topbar-row { display: flex; align-items: center; gap: 12px; padding-block: 10px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 8px; margin-right: auto; }
+.brand h1 { font-size: 20px; font-weight: 700; }
+.brand small { color: var(--ink-3); font-size: 12px; }
+.source { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); cursor: pointer; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.dot.ok { background: var(--ok); } .dot.err { background: var(--danger); } .dot.busy { background: var(--warn); }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs a { padding: 10px 14px; text-decoration: none; color: var(--ink-2); font-weight: 500; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs .count { font: 500 11px var(--f-mono); color: var(--ink-3); margin-left: 4px; }
+
+main { padding-block: 18px 48px; max-width: 1480px; margin: 0 auto; }
+.view-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.view-head h2 { font-size: 22px; margin-right: auto; }
+.view-head p { margin: 2px 0 0; color: var(--ink-2); max-width: 68ch; }
+
+/* Boutons */
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--ink); cursor: pointer; font-weight: 500; white-space: nowrap; }
+.btn:hover { border-color: var(--ink-3); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+.btn.small { min-height: 30px; padding: 3px 9px; font-size: 13px; }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Champs */
+.field { display: grid; gap: 4px; }
+.field > span { font-size: 12px; color: var(--ink-2); font-weight: 500; }
+input[type="text"], input[type="url"], input[type="password"], input[type="number"], input[type="date"], select, textarea {
+  min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); width: 100%; min-width: 0;
+}
+textarea { resize: vertical; line-height: 1.5; }
+select { padding-right: 26px; }
+
+/* Panneaux */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-2); flex-wrap: wrap; }
+.panel-head h3 { font-size: 15px; margin-right: auto; }
+.panel-body { padding: 14px; min-width: 0; }
+
+/* Explorateur */
+.explorer { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 16px; align-items: start; }
+@media (max-width: 960px) { .explorer { grid-template-columns: minmax(0, 1fr); } }
+.examples { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.examples select { flex: 1 1 260px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 5px 11px; cursor: pointer; color: var(--ink-2); font-weight: 500; min-height: 30px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+/* Constructeur de requêtes */
+.qbox { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.qbox.nested { background: var(--surface-2); }
+.qhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px; border-bottom: 1px dashed var(--line); }
+.qhead .verb { font: 600 13px var(--f-display); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.qhead select { width: auto; flex: 1 1 180px; }
+.qhead input { flex: 1 1 140px; width: auto; }
+.group { padding: 10px; display: grid; gap: 8px; }
+.group-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.group-bar .hint { color: var(--ink-3); font-size: 12px; }
+.children { display: grid; gap: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+.children.or { border-left-style: dashed; }
+.cond { border: 1px solid var(--line-2); border-radius: var(--r); background: var(--surface); padding: 8px; display: grid; gap: 8px; min-width: 0; }
+.qbox.nested .cond { background: var(--surface); }
+.cond-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cond-row > select, .cond-row > input { width: auto; flex: 1 1 120px; }
+.cond-kind { font: 600 11px var(--f-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--accent); padding: 2px 6px; background: var(--accent-soft); border-radius: 4px; white-space: nowrap; }
+.cond .x { margin-left: auto; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.addmenu { position: relative; }
+.addmenu-list { position: absolute; z-index: 15; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 250px; max-width: min(320px, 80vw); }
+.addmenu-list button { display: grid; width: 100%; text-align: left; padding: 7px 10px; border: 0; background: none; border-radius: 6px; cursor: pointer; }
+.addmenu-list button:hover, .addmenu-list button:focus-visible { background: var(--surface-2); }
+.addmenu-list b { font-weight: 600; font-size: 13.5px; }
+.addmenu-list small { color: var(--ink-3); font-size: 12px; }
+.qbox, .group, .children, .cond, .cond > *, .children > * { min-width: 0; }
+@media (max-width: 560px) {
+  .panel-body { padding: 10px; }
+  .group, .qhead { padding: 8px; }
+  .children { padding-left: 7px; }
+  .cond { padding: 6px; }
+  .qbox.nested { margin-right: -2px; }
+}
+.sentence { margin: 10px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: var(--r); color: var(--ink-2); font-size: 13px; }
+.sentence b { color: var(--ink); font-weight: 600; }
+details.json > summary { cursor: pointer; color: var(--ink-2); font-weight: 500; padding: 4px 0; }
+details.json textarea { min-height: 220px; margin-top: 8px; }
+.err-box { margin-top: 8px; padding: 8px 10px; border-radius: var(--r); background: var(--danger-soft); color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+.note { padding: 8px 10px; border-radius: var(--r); background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+
+/* Plan d'exécution */
+.plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.plan li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 5px 6px; border-radius: 4px; }
+.plan li:nth-child(odd) { background: var(--surface-2); }
+.plan .ico { font: 500 12px var(--f-mono); color: var(--ink-3); }
+.plan .running .ico { color: var(--warn); }
+.plan .final { font-weight: 600; }
+.plan .n { font: 500 12.5px var(--f-mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.plan .sample { display: block; color: var(--ink-3); font-size: 12px; overflow-wrap: anywhere; }
+.plan .warn { color: var(--warn); font-size: 12px; margin-left: 6px; }
+.stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.stats b { font: 600 18px var(--f-display); color: var(--ink); font-variant-numeric: tabular-nums; margin-right: 4px; }
+
+/* Tableaux */
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font: 600 11.5px var(--f-body); text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+td.name { font-weight: 500; min-width: 160px; }
+td.name small { display: block; color: var(--ink-3); font-weight: 400; font-size: 12px; }
+td.date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+tbody tr:hover { background: var(--surface-2); }
+.empty { padding: 22px 10px; text-align: center; color: var(--ink-3); }
+
+/* Puces */
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 4px; font-size: 11.5px; font-weight: 500; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.chip i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
+.tlp { font: 600 11px var(--f-mono); padding: 1px 6px; border-radius: 3px; background: #000; white-space: nowrap; display: inline-block; }
+.tlp.clear { color: #fff; } .tlp.green { color: #33ff00; } .tlp.amber { color: #ffc000; } .tlp.red { color: #ff2b2b; }
+.etype { font: 500 11.5px var(--f-mono); color: var(--ink-2); white-space: nowrap; }
+
+/* Tableau de bord */
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+.w { grid-column: span 6; display: flex; flex-direction: column; }
+.w.s { grid-column: span 3; } .w.l { grid-column: span 12; }
+@media (max-width: 1100px) { .w.s { grid-column: span 4; } }
+@media (max-width: 860px) { .w, .w.s, .w.l { grid-column: span 12; } .w.s { grid-column: span 6; } }
+@media (max-width: 480px) { .w.s { grid-column: span 12; } }
+.w .panel-head h3 { font-size: 14px; }
+.w .panel-body { flex: 1; }
+.w-meta { font-size: 12px; color: var(--ink-3); padding: 0 14px 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.w-meta .q { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.w-meta .q:hover { -webkit-line-clamp: unset; }
+.big { font: 600 44px/1 var(--f-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.big-sub { color: var(--ink-2); font-size: 13px; margin-top: 6px; }
+.big-names { margin-top: 8px; color: var(--ink-3); font-size: 12px; overflow-wrap: anywhere; }
+.loading { color: var(--ink-3); font-size: 13px; }
+
+/* Barres horizontales */
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: minmax(70px, 34%) minmax(0, 1fr) 3ch; gap: 8px; align-items: center; font-size: 13px; }
+.bar .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.bar .track { height: 14px; position: relative; }
+.bar .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar .v { text-align: right; font: 500 12.5px var(--f-mono); font-variant-numeric: tabular-nums; }
+.bar:hover .fill { filter: brightness(1.12); }
+
+/* Chronologie */
+.tl svg { width: 100%; height: auto; display: block; overflow: visible; }
+.tl .grid-l { stroke: var(--line-2); stroke-width: 1; }
+.tl .axis-t { fill: var(--ink-3); font: 500 10.5px var(--f-mono); }
+.tl .col { fill: var(--accent); }
+.tl .hit { fill: transparent; cursor: default; }
+.tl .hit:hover + .col, .tl .col.on { filter: brightness(1.15); }
+.tip { position: fixed; z-index: 50; pointer-events: none; background: var(--tooltip-bg); color: var(--tooltip-ink); padding: 5px 8px; border-radius: 5px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap; }
+.tip b { font-variant-numeric: tabular-nums; }
+
+/* Journal */
+.log { display: grid; gap: 8px; }
+.log details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.log summary { display: grid; grid-template-columns: 4ch minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 12px; cursor: pointer; font-size: 13px; }
+.log summary .num { font: 500 12px var(--f-mono); color: var(--ink-3); }
+.log summary .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log summary .ms { font: 500 12px var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.status { font: 600 11px var(--f-mono); padding: 1px 6px; border-radius: 3px; }
+.status.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.status.error { color: var(--danger); background: var(--danger-soft); }
+.status.pending { color: var(--warn); background: var(--warn-soft); }
+.log .body { padding: 0 12px 12px; display: grid; gap: 8px; }
+.log pre { margin: 0; padding: 10px; background: var(--surface-2); border-radius: var(--r); overflow-x: auto; max-height: 340px; }
+.log h4 { margin: 4px 0 0; font: 600 12px var(--f-body); text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
+
+/* Réglages */
+.settings { display: grid; gap: 16px; max-width: 760px; }
+.settings .panel-body { display: grid; gap: 14px; }
+.radio-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.radio-cards label { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.radio-cards label:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.radio-cards b { display: flex; gap: 8px; align-items: center; }
+.radio-cards small { color: var(--ink-2); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.muted { color: var(--ink-3); font-size: 12.5px; }
+
+/* Dialogue */
+dialog { border: 1px solid var(--line); border-radius: 10px; padding: 0; background: var(--surface); color: var(--ink); width: min(560px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+dialog::backdrop { background: rgba(10, 16, 22, .45); }
+dialog form { display: grid; gap: 12px; padding: 16px; }
+dialog h3 { font-size: 17px; }
+dialog textarea { min-height: 260px; }
+
+.toast { position: fixed; z-index: 60; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--tooltip-bg); color: var(--tooltip-ink); padding: 9px 14px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .plan li { animation: rise .18s ease-out both; }
+  @keyframes rise { from { transform: translateY(3px); opacity: .4; } to { transform: none; opacity: 1; } }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="gutter">
+    <div class="topbar-row">
+      <div class="brand"><h1>OpenDashboard</h1><small>requêtes en profondeur pour OpenCTI 6.7</small></div>
+      <button class="source" id="source-pill" type="button" title="Changer de source"><span class="dot" id="source-dot"></span><span id="source-label">Chargement…</span></button>
+    </div>
+    <nav class="tabs" aria-label="Sections">
+      <a href="#tableau" data-tab="tableau">Tableau de bord</a>
+      <a href="#explorateur" data-tab="explorateur">Explorateur</a>
+      <a href="#journal" data-tab="journal">Journal GraphQL<span class="count" id="log-count">0</span></a>
+      <a href="#reglages" data-tab="reglages">Réglages</a>
+    </nav>
+  </div>
+</header>
+
+<main class="gutter">
+  <!-- Tableau de bord -->
+  <section data-view="tableau">
+    <div class="view-head">
+      <div>
+        <h2 id="dash-title">Tableau de bord</h2>
+        <p>Chaque widget exécute une requête en profondeur. Modifiez-en un pour l’ouvrir dans l’explorateur.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="dash-refresh" type="button">Tout rafraîchir</button>
+        <button class="btn" id="dash-export" type="button">Exporter / importer</button>
+        <button class="btn ghost" id="dash-reset" type="button">Réinitialiser</button>
+      </div>
+    </div>
+    <div class="grid" id="dash-grid"></div>
+  </section>
+
+  <!-- Explorateur -->
+  <section data-view="explorateur" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Explorateur</h2>
+        <p>Composez une recherche : chaque sous-requête est exécutée d’abord, puis son résultat sert de filtre à la requête parente.</p>
+      </div>
+    </div>
+    <div class="explorer">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Requête</h3>
+          <div class="btn-row">
+            <button class="btn primary" id="run" type="button">Exécuter</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="examples">
+            <select id="example-select" aria-label="Exemples de requêtes"></select>
+          </div>
+          <div id="builder"></div>
+          <p class="sentence" id="sentence"></p>
+          <details class="json" id="json-details">
+            <summary>Requête au format JSON</summary>
+            <textarea id="json" class="code" spellcheck="false" aria-label="Requête JSON"></textarea>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn small" id="json-apply" type="button">Appliquer le JSON</button>
+              <button class="btn small ghost" id="json-copy" type="button">Copier</button>
+            </div>
+            <div id="json-error" class="err-box" hidden></div>
+          </details>
+        </div>
+      </div>
+
+      <div style="display:grid;gap:16px;min-width:0">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Plan d’exécution</h3>
+            <div class="stats" id="run-stats"></div>
+          </div>
+          <div class="panel-body">
+            <ol class="plan" id="plan"><li class="empty" style="display:block">Lancez une requête pour voir les étapes.</li></ol>
+            <div id="run-error" class="err-box" hidden></div>
+            <details class="json" style="margin-top:10px">
+              <summary>FilterGroup final envoyé à OpenCTI</summary>
+              <pre id="final-filters" style="margin:8px 0 0;padding:10px;background:var(--surface-2);border-radius:6px;overflow-x:auto;max-height:320px">—</pre>
+            </details>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Résultats <span class="muted" id="result-count"></span></h3>
+            <button class="btn small" id="save-widget" type="button" disabled>Enregistrer comme widget</button>
+          </div>
+          <div class="panel-body" style="padding:0">
+            <div class="table-wrap" id="results"><div class="empty">Aucun résultat pour l’instant.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Journal -->
+  <section data-view="journal" hidden>
+    <div class="view-head">
+      <div>
+        <h2>Journal GraphQL</h2>
+        <p>Toutes les requêtes envoyées, avec leurs variables. Copiez-les pour les rejouer dans le playground GraphQL d’OpenCTI.</p>
+      </div>
+      <button class="btn ghost" id="log-clear" type="button">Vider</button>
+    </div>
+    <div class="log" id="log"><div class="empty">Aucune requête pour l’instant.</div></div>
+  </section>
+
+  <!-- Réglages -->
+  <section data-view="reglages" hidden>
+    <div class="view-head"><div><h2>Réglages</h2><p>Source de données et paramètres du moteur. Ils sont gardés sur cet appareil uniquement.</p></div></div>
+    <form class="settings" id="settings-form">
+      <div class="panel">
+        <div class="panel-head"><h3>Source</h3></div>
+        <div class="panel-body">
+          <div class="radio-cards">
+            <label><b><input type="radio" name="mode" value="mock" id="mode-mock"> Mock intégré</b><small>Instance OpenCTI simulée dans le navigateur, avec un jeu de données fictif. Le schéma reprend celui d’OpenCTI 6.7.7.</small></label>
+            <label><b><input type="radio" name="mode" value="live" id="mode-live"> Instance OpenCTI</b><small>Appels directs à <code>/graphql</code> avec un jeton API. Le navigateur doit pouvoir joindre l’instance (CORS).</small></label>
+          </div>
+          <div class="two">
+            <label class="field"><span>URL de la plateforme</span><input type="url" id="set-url" placeholder="https://opencti.exemple.fr" autocomplete="off"></label>
+            <label class="field"><span>Jeton API (Bearer)</span><input type="password" id="set-token" placeholder="Profil → Jeton d’API" autocomplete="off"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="set-remember"> Mémoriser le jeton sur cet appareil</label>
+          <p class="note" id="live-note" hidden>Dans l’aperçu claude.ai, les appels vers une autre adresse sont bloqués. Pour une vraie instance, ouvrez <code>index.html</code> depuis le dépôt (voir README).</p>
+          <div class="btn-row">
+            <button class="btn primary" type="submit">Enregistrer</button>
+            <button class="btn" type="button" id="test-conn">Tester la connexion</button>
+            <span class="muted" id="conn-result"></span>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Moteur</h3></div>
+        <div class="panel-body">
+          <label class="field"><span>Résolution de « Lié à »</span>
+            <select id="set-strategy">
+              <option value="regardingOf">Filtre regardingOf (une requête, natif OpenCTI 6.x)</option>
+              <option value="relationships">Parcours des relations (stixCoreRelationships, plus de requêtes)</option>
+            </select>
+          </label>
+          <div class="two">
+            <label class="field"><span>Taille de page</span><input type="number" id="set-page" min="10" max="5000" step="10"></label>
+            <label class="field"><span>Éléments max. par étape</span><input type="number" id="set-max" min="100" max="100000" step="100"></label>
+          </div>
+          <p class="muted">Si une requête échoue avec regardingOf sur votre instance, passez au parcours des relations : il n’utilise que des arguments standards.</p>
+        </div>
+      </div>
+    </form>
+  </section>
+</main>
+
+<dialog id="widget-dialog">
+  <form method="dialog" id="widget-form">
+    <h3 id="widget-dialog-title">Nouveau widget</h3>
+    <label class="field"><span>Titre</span><input type="text" id="wd-title" required></label>
+    <div class="two">
+      <label class="field"><span>Affichage</span>
+        <select id="wd-view">
+          <option value="number">Nombre</option>
+          <option value="table">Tableau</option>
+          <option value="bars">Barres (répartition)</option>
+          <option value="timeline">Chronologie</option>
+        </select>
+      </label>
+      <label class="field"><span>Largeur</span>
+        <select id="wd-size"><option value="s">Petite</option><option value="m">Moyenne</option><option value="l">Pleine largeur</option></select>
+      </label>
+    </div>
+    <label class="field" id="wd-group-wrap"><span>Répartir par</span><select id="wd-group"></select></label>
+    <label class="field" id="wd-date-wrap"><span>Date</span><select id="wd-date"></select></label>
+    <div class="btn-row" style="justify-content:flex-end">
+      <button class="btn ghost" value="cancel" type="submit" formnovalidate>Annuler</button>
+      <button class="btn primary" value="ok" type="submit" id="wd-ok">Ajouter au tableau de bord</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="io-dialog">
+  <form method="dialog">
+    <h3>Exporter / importer le tableau de bord</h3>
+    <p class="muted" style="margin:0">Copiez ce JSON pour le sauvegarder, ou collez-en un autre puis importez-le.</p>
+    <textarea id="io-text" class="code" spellcheck="false" aria-label="Tableau de bord JSON"></textarea>
+    <div id="io-error" class="err-box" hidden></div>
+    <div class="btn-row" style="justify-content:flex-end">
+      <button class="btn ghost" value="cancel" type="submit">Fermer</button>
+      <button class="btn" type="button" id="io-copy">Copier</button>
+      <button class="btn primary" type="button" id="io-import">Importer</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/mock-data.js"></script>
+<script src="js/mock-server.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/examples.js"></script>
+<script src="js/ui.js"></script>
+<!-- OD:BODY-END -->
+</body>
+</html>
