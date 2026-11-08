@@ -256,7 +256,8 @@
   }
 
   // Sélecteur multi-valeurs alimenté par la base (libellés, marquages, vocabulaires…)
-  function picker({ values, load, onChange, placeholder, freeText = false, single = false, preload = false }) {
+  function picker({ values, load, onChange, placeholder, freeText = false, single = false, preload = false, validate = null }) {
+    const missing = new Set();
     let selected = asList(values).filter((v) => v !== '' && v !== null && v !== undefined);
     const colors = new Map();
     let opts = [], loading = false, error = null, timer = null, reqId = 0;
@@ -266,7 +267,17 @@
     const list = h('div', { class: 'picker-list', role: 'listbox', hidden: true });
     root.append(box, list);
 
-    const emit = () => { onChange(selected.slice()); renderChips(); renderList(); };
+    const emit = () => { onChange(selected.slice()); renderChips(); renderList(); check(); };
+    // Signale les valeurs qui n'existent pas en base (ex. nom inconnu pour le type choisi)
+    async function check() {
+      if (!validate) return;
+      try {
+        await ensureReady();
+        const res = await validate(selected.slice());
+        missing.clear(); res.forEach((v) => missing.add(v));
+        renderChips();
+      } catch { /* ignorer : simple aide à la saisie */ }
+    }
     function toggle(v) {
       if (selected.includes(v)) selected = selected.filter((x) => x !== v);
       else selected = single ? [v] : [...selected, v];
@@ -274,8 +285,8 @@
       emit();
     }
     function renderChips() {
-      box.replaceChildren(...selected.map((v) => h('span', { class: 'pchip' },
-        colors.get(v) ? h('i', { style: `background:${colors.get(v)}` }) : null, v,
+      box.replaceChildren(...selected.map((v) => h('span', { class: `pchip${missing.has(v) ? ' missing' : ''}`, title: missing.has(v) && validate ? validate.message(v) : null },
+        colors.get(v) ? h('i', { style: `background:${colors.get(v)}` }) : null, missing.has(v) ? '⚠ ' : null, v,
         h('button', { type: 'button', 'aria-label': `Retirer ${v}`, onclick: (e) => { e.stopPropagation(); toggle(v); } }, '✕'))), input);
       input.placeholder = selected.length ? '' : placeholder;
     }
@@ -323,6 +334,7 @@
       } else if (e.key === 'Backspace' && !input.value && selected.length) toggle(selected[selected.length - 1]);
     });
     renderChips();
+    check();
     if (preload && selected.length) {
       Promise.resolve().then(ensureReady).then(() => load('')).then((r) => { r.forEach((o) => o.color && colors.set(o.value, o.color)); renderChips(); }).catch(() => {});
     }
@@ -347,7 +359,19 @@
         load: (q) => engine.suggest('vocabulary', { search: q, category: VOCAB_FIELDS[c.field] }) });
     }
     if (exact && (c.field === 'name' || c.field === 'alias')) {
-      return picker({ values: c.value, onChange: setValue(c), placeholder: `chercher parmi les ${noun(ctxType)}…`, freeText: true,
+      let validate = null;
+      if (c.field === 'name') {
+        validate = async (vals) => {
+          const out = [];
+          for (const v of vals) {
+            const found = await engine.suggest('entity', { search: v, types: [ctxType] });
+            if (!found.some((o) => String(o.value).toLowerCase() === String(v).toLowerCase())) out.push(v);
+          }
+          return out;
+        };
+        validate.message = (v) => `Aucun(e) ${noun(ctxType, 1)} nommé(e) « ${v} » en base : changez le type de ce bloc ou le nom.`;
+      }
+      return picker({ values: c.value, onChange: setValue(c), placeholder: `chercher parmi les ${noun(ctxType)}…`, freeText: true, validate,
         load: (q) => engine.suggest('entity', { search: q, types: [ctxType] }) });
     }
     if (exact && c.field === 'entity_type') {
@@ -404,10 +428,11 @@
     store.set('od.draft', draft);
   }
 
-  function renderQueryBox(q, { nested, verb }) {
+  function renderQueryBox(q, { nested, verb, help }) {
     normalize(q);
     const types = nested === 'container' ? TYPES.filter(([v]) => CONTAINER_TYPES.includes(v)) : TYPES;
     return h('div', { class: `qbox${nested ? ' nested' : ''}` },
+      help ? h('div', { class: 'qhelp' }, help) : null,
       h('div', { class: 'qhead' },
         h('span', { class: 'verb' }, verb),
         sel(types, q.type, (v) => { q.type = v; renderBuilder(); }, { 'aria-label': 'Type d’entité' }),
@@ -506,17 +531,17 @@
           negateBox(c, 'exclure'),
           removeBtn(list, i)),
         h('div', { class: 'rel-src muted' }, `Relations proposées d’après la table ${relMap.source === 'instance' ? 'de l’instance' : 'embarquée (OpenCTI 6.7.7)'}.`),
-        renderQueryBox(c.relatedTo, { nested: true, verb: 'parmi' }));
+        renderQueryBox(c.relatedTo, { nested: true, verb: 'avec des', help: `Ce bloc décrit l’entité à l’autre bout de la relation (le « X »), pas les ${noun(ctxType)} recherchés.` }));
     }
     if (c.containedIn) {
       return h('div', { class: 'cond' },
         h('div', { class: 'cond-row' }, h('span', { class: 'cond-kind' }, 'contenu dans'), negateBox(c, 'exclure (absent de ces conteneurs)'), removeBtn(list, i)),
-        renderQueryBox(c.containedIn, { nested: 'container', verb: 'conteneurs' }));
+        renderQueryBox(c.containedIn, { nested: 'container', verb: 'dans des', help: 'Ce bloc décrit les conteneurs (rapports…) dans lesquels l’entité doit figurer.' }));
     }
     if (c.contains) {
       return h('div', { class: 'cond' },
         h('div', { class: 'cond-row' }, h('span', { class: 'cond-kind' }, 'contient'), negateBox(c, 'exclure'), removeBtn(list, i)),
-        renderQueryBox(c.contains, { nested: true, verb: 'parmi' }));
+        renderQueryBox(c.contains, { nested: true, verb: 'contenant des', help: 'Ce bloc décrit ce que le conteneur doit contenir (le « X »), pas le résultat.' }));
     }
     if (c.ids) {
       return h('div', { class: 'cond' }, h('div', { class: 'cond-row' },
@@ -600,6 +625,11 @@
       $('#final-filters').textContent = JSON.stringify(res.filters, null, 2);
       $('#result-count').textContent = `(${res.items.length})`;
       $('#results').replaceChildren(resultsTable(res.items, 500));
+      if (!res.items.length && res.emptySubqueries.length) {
+        $('#results').prepend(h('div', { class: 'note', style: 'margin:12px' },
+          `Aucun résultat parce qu’une sous-requête ne trouve rien : ${res.emptySubqueries.map((d) => `« ${d} »`).join(', ')}. `,
+          'Vérifiez le type choisi dans ce bloc : il décrit l’entité à l’autre bout de la relation ou du conteneur, pas le résultat (ex. QuartzLoader est un malware, pas un mode opératoire).'));
+      }
       $('#save-widget').disabled = false;
     } catch (e) {
       $('#run-error').hidden = false;

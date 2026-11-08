@@ -232,13 +232,15 @@
 
   function describeQuery(q) {
     const t = asList(q.type).join(' | ') || 'Entités';
-    return q.where ? `${t} filtrés` : t;
+    if (!q.where) return q.search ? `${t} « ${q.search} »` : t;
+    const d = describeCond(q.where);
+    return `${t} où ${d.length > 90 ? `${d.slice(0, 89)}…` : d}`;
   }
 
   function describeCond(c) {
     if (!c) return '';
-    if (c.all) return `ET(${c.all.length})`;
-    if (c.any) return `OU(${c.any.length})`;
+    if (c.all) return c.all.length === 1 ? describeCond(c.all[0]) : c.all.map(describeCond).join(' ET ');
+    if (c.any) return c.any.length === 1 ? describeCond(c.any[0]) : `(${c.any.map(describeCond).join(' OU ')})`;
     if (c.field) return `${c.field} ${c.op || 'eq'} ${asList(c.value).join(', ')}`;
     if (c.label) return `libellé ${asList(c.label).join(', ')}`;
     if (c.author) return `auteur ${asList(c.author).join(', ')}`;
@@ -281,6 +283,7 @@
       return {
         items,
         plan: ctx.plan,
+        emptySubqueries: ctx.emptySteps || [],
         filters,
         stats: { requests: ctx.requests, ms: Math.round(performance.now() - ctx.t0) },
       };
@@ -336,7 +339,8 @@
         { types: types.length ? types : null, filters, search: query.search || null }, ctx, `Sous-requête ${describeQuery(query)}`);
       const ids = nodes.map((n) => n.id);
       s.sample = nodes.slice(0, 6).map((n) => n.representative?.main);
-      this.done(ctx, s, ids.length, ids.length >= this.options.maxItems ? 'tronqué' : null);
+      this.done(ctx, s, ids.length, ids.length >= this.options.maxItems ? 'tronqué' : ids.length === 0 ? 'aucun résultat' : null);
+      if (!ids.length) ctx.emptySteps = [...(ctx.emptySteps || []), describeQuery(query)];
       ctx.depth--;
       ctx.cache.set(key, ids);
       return ids;
