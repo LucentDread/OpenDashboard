@@ -263,8 +263,12 @@
     let opts = [], loading = false, error = null, timer = null, reqId = 0;
     const root = h('div', { class: 'picker' });
     const input = h('input', { type: 'text', autocomplete: 'off', 'aria-label': placeholder, 'aria-autocomplete': 'list' });
-    const box = h('div', { class: 'picker-box', onclick: () => input.focus() });
+    // Les puces vivent dans leur propre conteneur : le champ n'est jamais retiré du DOM (sinon il perd le focus).
+    const chipsEl = h('span', { class: 'picker-chips' });
+    const box = h('div', { class: 'picker-box', onclick: () => input.focus() }, chipsEl, input);
     const list = h('div', { class: 'picker-list', role: 'listbox', hidden: true });
+    // Cliquer dans la liste ne doit pas retirer le focus du champ.
+    list.addEventListener('mousedown', (e) => e.preventDefault());
     root.append(box, list);
 
     const emit = () => { onChange(selected.slice()); renderChips(); renderList(); check(); };
@@ -278,28 +282,35 @@
         renderChips();
       } catch { /* ignorer : simple aide à la saisie */ }
     }
-    function toggle(v) {
+    function toggle(v, { fromList = false } = {}) {
       if (selected.includes(v)) selected = selected.filter((x) => x !== v);
       else selected = single ? [v] : [...selected, v];
       if (single) close();
       emit();
+      // Après un choix dans la liste : on efface la recherche et on revient à la liste complète.
+      if (fromList && !single) {
+        const hadSearch = input.value !== '';
+        input.value = '';
+        input.focus();
+        if (hadSearch) refresh();
+      }
     }
     function renderChips() {
-      box.replaceChildren(...selected.map((v) => h('span', { class: `pchip${missing.has(v) ? ' missing' : ''}`, title: missing.has(v) && validate ? validate.message(v) : null },
+      chipsEl.replaceChildren(...selected.map((v) => h('span', { class: `pchip${missing.has(v) ? ' missing' : ''}`, title: missing.has(v) && validate ? validate.message(v) : null },
         colors.get(v) ? h('i', { style: `background:${colors.get(v)}` }) : null, missing.has(v) ? '⚠ ' : null, v,
-        h('button', { type: 'button', 'aria-label': `Retirer ${v}`, onclick: (e) => { e.stopPropagation(); toggle(v); } }, '✕'))), input);
+        h('button', { type: 'button', 'aria-label': `Retirer ${v}`, onclick: (e) => { e.stopPropagation(); toggle(v); } }, '✕'))));
       input.placeholder = selected.length ? '' : placeholder;
     }
     function renderList() {
       const typed = input.value.trim();
       const items = opts.map((o) => h('button', {
         type: 'button', role: 'option', 'aria-selected': String(selected.includes(o.value)),
-        onclick: (e) => { e.stopPropagation(); toggle(o.value); },
+        onclick: (e) => { e.stopPropagation(); toggle(o.value, { fromList: true }); },
       }, h('span', { class: 'pcheck' }, selected.includes(o.value) ? '✓' : ''),
       o.color ? h('i', { style: `background:${o.color}` }) : null,
       h('span', { class: 'plabel' }, o.label), o.hint ? h('small', {}, o.hint) : null));
       if (freeText && typed && !opts.some((o) => o.value === typed)) {
-        items.push(h('button', { type: 'button', class: 'pfree', onclick: (e) => { e.stopPropagation(); input.value = ''; toggle(typed); } }, `Utiliser « ${typed} »`));
+        items.push(h('button', { type: 'button', class: 'pfree', onclick: (e) => { e.stopPropagation(); toggle(typed, { fromList: true }); } }, `Utiliser « ${typed} »`));
       }
       if (!items.length) items.push(h('div', { class: 'pempty' }, loading ? 'Chargement…' : error ? `Erreur : ${error}` : 'Aucune valeur correspondante en base.'));
       list.replaceChildren(...items);
@@ -330,7 +341,7 @@
         e.preventDefault();
         const typed = input.value.trim();
         const match = opts.find((o) => o.value.toLowerCase() === typed.toLowerCase()) || (typed ? opts[0] : null);
-        if (match) { input.value = ''; toggle(match.value); } else if (freeText && typed) { input.value = ''; toggle(typed); }
+        if (match) toggle(match.value, { fromList: true }); else if (freeText && typed) toggle(typed, { fromList: true });
       } else if (e.key === 'Backspace' && !input.value && selected.length) toggle(selected[selected.length - 1]);
     });
     renderChips();
